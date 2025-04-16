@@ -1,35 +1,33 @@
-import OpenAI from "openai";
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import debug from "debug";
+import 'dotenv/config';
 
 const llmDebug = new debug('llm');
 const embeddingDebug = new debug('embedding');
-const openai = new OpenAI();
+
+// Initialize the Google Generative AI with your API key
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 
 // Generate a vector embedding from the submitted prompt
 export async function generateEmbedding(prompt) {
-  const embeddingsModel = 'text-embedding-3-small'
-  llmDebug(`Model: ${embeddingsModel}`);
+  const embeddingModel = genAI.getGenerativeModel({ model: "embedding-001" });
+  llmDebug(`Model: embedding-001`);
   llmDebug(`Prompt: ${prompt}`);
 
-  // This is the call to the openAI model that generates the embedding
-  const embedding = await openai.embeddings.create({
-    model: embeddingsModel,
-    input: prompt,
-  }).then(response =>
-    // extract the embedding from the JSON response
-    response["data"][0]["embedding"]
-  );
+  // This is the call to the Google Generative AI model that generates the embedding
+  const result = await embeddingModel.embedContent(prompt);
+  const embedding = result.embedding.values;
 
   embeddingDebug('Embedding:');
   embeddingDebug(embedding);
 
-  return embedding 
+  return embedding;
 }
 
-// Use the gpt-4o-mini model to generate an LLM response
+// Use the Gemini model to generate an LLM response
 // based on the prompt and any additional context obtained via RAG
-export async function generateChatbotResponse(prompt, context){
-  const completionsModel = 'gpt-4o-mini'
+export async function generateChatbotResponse(prompt, context) {
+  const completionsModel = "gemini-1.5-pro";
 
   // The developer prompt to the chatbot tells it how to behave,
   // provides information about the data it's receiving,
@@ -54,22 +52,47 @@ export async function generateChatbotResponse(prompt, context){
     ${context}
 
     Answer in conversational prose.
-`
+`;
 
   llmDebug(`Model: ${completionsModel}`);
   llmDebug(`Prompt: ${prompt}`);
 
-  // This is the call to the openAI model that generates the chatbot response
-  const response = await openai.chat.completions.create({
+  // Configure the Gemini model
+  const geminiModel = genAI.getGenerativeModel({
     model: completionsModel,
-    messages: [
-      { role: "developer", content: developerPrompt },
-      { role: "user", content: prompt },  // the user prompt is the question that the user asked
+    safetySettings: [
+      {
+        category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+        threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+      },
     ],
-    store: true,
   });
+
+  // Start a chat session
+  const chat = geminiModel.startChat({
+    history: [
+      { role: "user", parts: [{ text: developerPrompt }] },
+    ],
+  });
+
+  // Generate a response
+  const result = await chat.sendMessage(prompt);
+  const response = result.response;
 
   llmDebug("Response:");
   llmDebug(response);
-  return `${response.choices[0].message.content}\n`;
+  
+  return `${response.text()}\n`;
 }
